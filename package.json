@@ -1,11 +1,11 @@
 {
-  "name": "fetch-xrpl-transactions",
+  "name": "xrp-transaction-exporter",
   "version": "0.9.0",
-  "description": "Fetch XRPL transactions and store in Google BigQuery",
+  "description": "Fetch XRPL transactions and store it in Kafka. Based on the work of WietseWind",
   "main": "./index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/WietseWind/fetch-xrpl-transactions.git"
+    "url": "https://github.com/santiment/xrp-transaction-exporter.git"
   },
   "keywords": [
     "xrp",
@@ -13,17 +13,18 @@
     "transactions",
     "bigquery"
   ],
-  "author": "WietseWind",
+  "author": "WietseWind & Valentin Mihov",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/WietseWind/fetch-xrpl-transactions/issues"
+    "url": "https://github.com/santiment/xrp-transaction-exporter/issues"
   },
-  "homepage": "https://github.com/WietseWind/fetch-xrpl-transactions",
+  "homepage": "https://github.com/santiment/xrp-transaction-exporter",
   "dependencies": {
-    "@google-cloud/bigquery": "^1.3.0",
-    "rippled-ws-client": "^1.0.0"
+    "micro": "^9.3.3",
+    "rippled-ws-client": "^1.0.0",
+    "san-exporter": "git+https://github.com/santiment/san-exporter.git"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "micro -l tcp://0.0.0.0:3000"
   }
 }

@@ -1,235 +1,159 @@
-const { schema, projectId, datasetName, tableName, CurrencyFields } = require('./schema')
-
+const pkg = require('./package.json');
+const { send } = require('micro')
+const url = require('url')
+const { Exporter } = require('san-exporter')
 const Client = require('rippled-ws-client')
-const BigQuery = require('@google-cloud/bigquery')
-const bigquery = new BigQuery({ projectId: projectId })
 
-const XRPLNodeUrl = typeof process.env.NODE === 'undefined' ? 'wss://s2.ripple.com' : process.env.NODE.trim()
-const StartLedger = typeof process.env.LEDGER === 'undefined' ? 32570 : parseInt(process.env.LEDGER)
+const exporter = new Exporter(pkg.name)
 
-console.log('Fetch XRPL transactions into Google BigQuery')
+const XRPLNodeUrl = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
+let lastProcessedPosition = {
+  blockNumber: parseInt(process.env.LEDGER || "32570"),
+}
+
+const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "10")
+
+console.log('Fetch XRPL transactions')
   
-new Client(XRPLNodeUrl).then(Connection => {
-  let Stopped = false
-  let LastLedger = 0
-
-  console.log('Connected to the XRPL')
-  let retryTimeout = 0
-
-  const fetchLedgerTransactions = (ledger_index) => {
-    return new Promise((resolve, reject) => {
-      return Connection.send({
-        command: 'ledger',
-        ledger_index: parseInt(ledger_index),
-        transactions: true,
-        expand: false
-      }, 10).then(Result => {
-        if (typeof Result.ledger.transactions === 'undefined' || Result.ledger.transactions.length === 0) {
-          // Do nothing
-          resolve({ ledger_index: ledger_index, transactions: [] })
-          return
+const fetchLedgerTransactions = (connection, ledger_index) => {
+  return new Promise((resolve, reject) => {
+    return connection.send({
+      command: 'ledger',
+      ledger_index: parseInt(ledger_index),
+      transactions: true,
+      expand: false
+    }, 10).then(({ledger}) => {
+      if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
+        // Do nothing
+        resolve({ ledger: ledger, transactions: [] })
+        return
+      } else {
+        if (ledger.transactions.length > 200) {
+          // Lots of data. Per TX
+          console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
+          let transactions = Result.ledger.transactions.map(Tx => {
+            return connection.send({
+              command: 'tx',
+              transaction: Tx
+            }, 10)
+          })
+          Promise.all(transactions).then(r => {
+            let allTxs = r.filter(t => {
+              return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
+            })
+            console.log('>>> ALL TXS FETCHED:', allTxs.length)
+            resolve({ ledger: ledger, transactions: allTxs.map(t => {
+              return Object.assign(t, {
+                metaData: t.meta
+              })
+            }) })
+            return
+          })
         } else {
-          if (Result.ledger.transactions.length > 200) {
-            // Lots of data. Per TX
-            console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${Result.ledger.transactions.length} ]], processing per-tx...`)
-            let transactions = Result.ledger.transactions.map(Tx => {
-              return Connection.send({
-                command: 'tx',
-                transaction: Tx
-              }, 10)
-            })
-            Promise.all(transactions).then(r => {
-              let allTxs = r.filter(t => {
-                return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
-              })
-              console.log('>>> ALL TXS FETCHED:', allTxs.length)
-              resolve({ ledger_index: ledger_index, transactions: allTxs.map(t => {
-                return Object.assign(t, {
-                  metaData: t.meta
-                })
-              }) })
+          // Fetch at once.
+          resolve(new Promise((resolve, reject) => {
+            connection.send({
+              command: 'ledger',
+              ledger_index: parseInt(ledger_index),
+              transactions: true,
+              expand: true
+            }, 10).then(Result => {
+              resolve({ ledger: ledger, transactions: Result.ledger.transactions })
               return
-            })
-          } else {
-            // Fetch at once.
-            resolve(new Promise((resolve, reject) => {
-              Connection.send({
-                command: 'ledger',
-                ledger_index: parseInt(ledger_index),
-                transactions: true,
-                expand: true
-              }, 10).then(Result => {
-                resolve({ ledger_index: ledger_index, transactions: Result.ledger.transactions })
-                return
-              }).catch(reject)
-            }))
-          }
+            }).catch(reject)
+          }))
         }
-        return
-      }).catch(reject)
-    })
-  }
-
-  const run = (ledger_index) => {
-    return fetchLedgerTransactions(ledger_index).then(Result => {
-      let txCount = Result.transactions.length
-      console.log(`${txCount > 0 ? 'Transactions in' : ' '.repeat(15)} ${Result.ledger_index}: `, txCount > 0 ? txCount : '-')
-      if (txCount > 0) {
-        let Transactions = Result.transactions.map(Tx => {
-          let _Tx = {
-            LedgerIndex: Result.ledger_index
-          }
-          // Auto mapping for 1:1 fields (non RECORD)
-          schema.forEach(SchemaNode => {
-            if (typeof Tx[SchemaNode.description] !== 'undefined' 
-                && Tx[SchemaNode.description] !== null 
-                && typeof Tx[SchemaNode.description] !== 'object' 
-                && SchemaNode.description === SchemaNode.name
-            ) {
-              let Value = Tx[SchemaNode.description]
-              if (typeof Value === 'string' && typeof SchemaNode.type !== 'STRING') {
-                if (SchemaNode.type === 'INTEGER') {
-                  Value = parseInt(Value)
-                }
-                if (SchemaNode.type === 'FLOAT') {
-                  Value = parseFloat(Value)
-                }
-              }
-              Object.assign(_Tx, {
-                [SchemaNode.name]: Value
-              })
-            }
-            if (SchemaNode.description.match(/^metaData\./)
-                && typeof Tx.metaData[SchemaNode.name] !== 'undefined' 
-                && Tx.metaData[SchemaNode.name] !== null 
-                && typeof Tx.metaData[SchemaNode.name] !== 'object' 
-                && SchemaNode.name !== 'DeliveredAmount'
-            ) {
-              Object.assign(_Tx, {
-                [SchemaNode.name]: Tx.metaData[SchemaNode.name]
-              })
-            }
-          })
-
-          if (typeof Tx.metaData.DeliveredAmount === 'undefined' && typeof Tx.metaData.delivered_amount !== 'undefined') {
-            Tx.metaData.DeliveredAmount = Tx.metaData.delivered_amount
-          }
-          if (typeof Tx.metaData.DeliveredAmount !== 'undefined') {
-            let DeliveredAmount = parseInt(Tx.metaData.DeliveredAmount)
-            if (!isNaN(DeliveredAmount)) {
-              Object.assign(_Tx, {
-                DeliveredAmount: DeliveredAmount
-              })
-            }
-          }
-
-          if (typeof Tx.Memos !== 'undefined') {
-            Object.assign(_Tx, {
-              Memos: Tx.Memos.map(m => {
-                let n = { Memo: {} }
-                if (typeof m.Memo !== 'undefined') {
-                  if (typeof m.Memo.MemoData !== 'undefined') n.Memo.MemoData = m.Memo.MemoData
-                  if (typeof m.Memo.MemoFormat !== 'undefined') n.Memo.MemoData = m.Memo.MemoFormat
-                  if (typeof m.Memo.MemoType !== 'undefined') n.Memo.MemoData = m.Memo.MemoType
-                }
-                return n
-              })
-            })
-          }
-
-          CurrencyFields.forEach(CurrencyField => {
-            if (typeof Tx[CurrencyField] === 'string') {
-              Object.assign(_Tx, {
-                [CurrencyField + 'XRP']: parseInt(Tx[CurrencyField])
-              })
-            }
-            if (typeof Tx[CurrencyField] === 'object' && typeof Tx[CurrencyField].currency !== 'undefined') {
-              Object.assign(_Tx, {
-                [CurrencyField + 'DEX']: {
-                  currency: Tx[CurrencyField].currency,
-                  issuer: Tx[CurrencyField].issuer,
-                  value: parseFloat(Tx[CurrencyField].value)
-                }
-              })
-            }
-          })
-          
-          return _Tx
-        })
-        
-        // console.dir(Transactions[0], { depth: null })
-        // process.exit(1)
-
-        bigquery.dataset(datasetName).table(tableName).insert(Transactions)
-          .then(r => {
-            console.log(`Inserted rows`, r)
-            LastLedger = Result.ledger_index
-            // process.exit(0)
-          })
-          .catch(err => {
-            if (err && err.name === 'PartialFailureError') {
-              if (err.errors && err.errors.length > 0) {
-                console.log('Insert errors:')
-                err.errors.forEach(err => console.dir(err, { depth: null }))
-                process.exit(1)
-              }
-            } else {
-              console.error('ERROR:', err)
-              process.exit(1)
-            }
-          })
       }
-
-      retryTimeout = 0
-      
-      if (Stopped) {
-        return
-      }
-
-      return run(ledger_index + 1)
-    }).catch(e => {
-      console.log(e)
-      process.exit(1)
-
-      retryTimeout += 500
-      if (retryTimeout > 5000) retryTimeout = 5000
-      console.log(`Oops... Retry in ${retryTimeout / 1000} sec.`)
-      setTimeout(() => {
-        return run(ledger_index)
-      }, retryTimeout)
-    })
-  }
-
-  console.log(`Starting at ledger [ ${StartLedger} ], \n  Checking last ledger in BigQuery...`)
-
-  bigquery.query({
-    query: `SELECT 
-              COUNT(1) as TxCount,
-              MIN(LedgerIndex) as MinLedger,
-              MAX(LedgerIndex) as MaxLedger,
-              COUNT(DISTINCT LedgerIndex) as LedgersWithTxCount
-            FROM 
-              xrpledgerdata.fullhistory.transactions`,
-    useLegacySql: false, // Use standard SQL syntax for queries.
-  }).then(r => {
-    if (r[0][0].MaxLedger > StartLedger) {
-      console.log(`BigQuery History at ledger [ ${r[0][0].MaxLedger} ], > StartLedger.\n  Forcing StartLedger at:\n  >>> ${r[0][0].MaxLedger+1}\n\n`)
-      run(r[0][0].MaxLedger + 1)
-    } else{
-      run(StartLedger)
-    }
-  }).catch(e => {
-    console.log('Google BigQuery Error', e)
-    process.exit(1)
+      return
+    }).catch(reject)
   })
+}
 
-  process.on('SIGINT', function() {
-    console.log(`\nGracefully shutting down from SIGINT (Ctrl+C)\n -- Wait for remaining BigQuery inserts and XRPL Connection close...`);
-  
-    Stopped = true  
-    Connection.close()
-    if (LastLedger > 0) {
-      console.log(`\nLast ledger: [ ${LastLedger} ]\n\nRun your next job with ENV: "LEDGER=${LastLedger+1}"\n\n`)
+async function work(connection) {
+  const currentLedger = await connection.send({
+    command: 'ledger',
+    ledger_index: 'validated',
+    transactions: true,
+    expand: false
+  }, 10)
+
+  const currentBlock = parseInt(currentLedger.ledger.ledger_index)
+  const transactionAccumulator = []
+
+  console.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
+
+  while (lastProcessedPosition.blockNumber < currentBlock) {
+    const {ledger, transactions} = await fetchLedgerTransactions(connection, lastProcessedPosition.blockNumber)
+    console.log(`${transactions.length > 0 ? 'Transactions in' : ' '.repeat(15)} ${ledger.ledger_index}: `, transactions.length > 0 ? transactions.length : '-')
+
+    transactionAccumulator.push({ledger, transactions, primaryKey: ledger.ledger_index})
+
+    if (transactionAccumulator.length >= SEND_BATCH_SIZE) {
+      console.info(`Storing ${transactionAccumulator.length} messages`)
+
+      await exporter.sendDataWithKey(transactionAccumulator, "primaryKey")
+
+      lastProcessedPosition.blockNumber += 1
+      await exporter.savePosition(lastProcessedPosition)
+
+      transactionAccumulator.length = 0
+    } else {
+      lastProcessedPosition.blockNumber += 1
+    }
+  }
+}
+
+async function initLastProcessedLedger() {
+  const lastPosition = await exporter.getLastPosition()
+
+  if (lastPosition) {
+    lastProcessedPosition = lastPosition
+    console.info(`Resuming export from position ${JSON.stringify(lastPosition)}`)
+  } else {
+    await exporter.savePosition(lastProcessedPosition)
+    console.info(`Initialized exporter with initial position ${JSON.stringify(lastProcessedPosition)}`)
+  }
+}
+
+const fetchEvents = (connection) => {
+  return work(connection)
+    .then(() => {
+      console.log(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
+
+      // Look for new events every 1 sec
+      setTimeout(fetchEvents, 1000)
+    })
+}
+
+const init = async () => {
+  const connection = await new Client(XRPLNodeUrl)
+  await exporter.connect()
+  await initLastProcessedLedger()
+  await fetchEvents(connection)
+}
+
+init()
+
+const healthcheckKafka = () => {
+  return new Promise((resolve, reject) => {
+    if (exporter.producer.isConnected()) {
+      resolve()
+    } else {
+      reject("Kafka client is not connected to any brokers")
     }
   })
-})
+}
+
+module.exports = async (request, response) => {
+  const req = url.parse(request.url, true);
+
+  switch (req.pathname) {
+    case '/healthcheck':
+      return healthcheckKafka()
+        .then(() => send(response, 200, "ok"))
+        .catch((err) => send(response, 500, `Connection to kafka failed: ${err}`))
+
+    default:
+      return send(response, 404, 'Not found');
+  }
+}
