@@ -1,11 +1,11 @@
 {
-  "name": "xrp-transaction-exporter",
+  "name": "xrp-transactions-exporter",
   "version": "0.9.0",
   "description": "Fetch XRPL transactions and store it in Kafka. Based on the work of WietseWind",
   "main": "./index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/santiment/xrp-transaction-exporter.git"
+    "url": "https://github.com/santiment/xrp-transactions-exporter.git"
   },
   "keywords": [
     "xrp",
@@ -16,9 +16,9 @@
   "author": "WietseWind & Valentin Mihov",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/santiment/xrp-transaction-exporter/issues"
+    "url": "https://github.com/santiment/xrp-transactions-exporter/issues"
   },
-  "homepage": "https://github.com/santiment/xrp-transaction-exporter",
+  "homepage": "https://github.com/santiment/xrp-transactions-exporter",
   "dependencies": {
     "micro": "^9.3.3",
     "rippled-ws-client": "^1.0.0",
