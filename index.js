@@ -31,7 +31,7 @@ const fetchLedgerTransactions = (connection, ledger_index) => {
         if (ledger.transactions.length > 200) {
           // Lots of data. Per TX
           console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
-          let transactions = Result.ledger.transactions.map(Tx => {
+          let transactions = ledger.transactions.map(Tx => {
             return connection.send({
               command: 'tx',
               transaction: Tx
