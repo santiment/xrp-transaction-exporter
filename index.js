@@ -11,7 +11,7 @@ let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
 }
 
-const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "10")
+const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
 
 console.log('Fetch XRPL transactions')
   
@@ -78,27 +78,26 @@ async function work(connection) {
   }, 10)
 
   const currentBlock = parseInt(currentLedger.ledger.ledger_index)
-  const transactionAccumulator = []
+  const requests = []
 
   console.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
 
-  while (lastProcessedPosition.blockNumber < currentBlock) {
-    const {ledger, transactions} = await fetchLedgerTransactions(connection, lastProcessedPosition.blockNumber)
-    console.log(`${transactions.length > 0 ? 'Transactions in' : ' '.repeat(15)} ${ledger.ledger_index}: `, transactions.length > 0 ? transactions.length : '-')
+  while (lastProcessedPosition.blockNumber + requests.length < currentBlock) {
+    requests.push(fetchLedgerTransactions(connection, lastProcessedPosition.blockNumber + requests.length))
 
-    transactionAccumulator.push({ledger, transactions, primaryKey: ledger.ledger_index})
+    if (requests.length >= SEND_BATCH_SIZE || lastProcessedPosition.blockNumber + requests.length == currentBlock) {
+      const ledgers = await Promise.all(requests).map(async ({ledger, transactions}) => {
+        console.log(`${transactions.length > 0 ? 'Transactions in' : ' '.repeat(15)} ${ledger.ledger_index}: `, transactions.length > 0 ? transactions.length : '-')
+        return { ledger, transactions, primaryKey: ledger.ledger_index }
+      })
 
-    if (transactionAccumulator.length >= SEND_BATCH_SIZE) {
-      console.info(`Storing ${transactionAccumulator.length} messages`)
+      console.log(`Flushing ledgers ${ledgers[0].primaryKey}:${ledgers[ledgers.length - 1].primaryKey}`)
+      await exporter.sendDataWithKey(ledgers, "primaryKey")
 
-      await exporter.sendDataWithKey(transactionAccumulator, "primaryKey")
-
-      lastProcessedPosition.blockNumber += 1
+      lastProcessedPosition.blockNumber += ledgers.length
       await exporter.savePosition(lastProcessedPosition)
 
-      transactionAccumulator.length = 0
-    } else {
-      lastProcessedPosition.blockNumber += 1
+      requests.length = 0
     }
   }
 }
