@@ -11,11 +11,15 @@ services:
     environment:
       KAFKA_ADVERTISED_HOST_NAME: kafka
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_MESSAGE_MAX_BYTES: 10485760
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
   exporter:
     build: .
+    volumes:
+      - ./:/app
     environment:
       KAFKA_URL: kafka:9092
       ZOOKEEPER_URL: zookeeper:2181
-      LEDGER: 4000000
+      LEDGER: 1238070
+      SEND_BATCH_SIZE: 10

@@ -22,7 +22,7 @@
   "dependencies": {
     "micro": "^9.3.3",
     "rippled-ws-client": "^1.0.0",
-    "san-exporter": "git+https://github.com/santiment/san-exporter.git"
+    "san-exporter": "git+https://github.com/santiment/san-exporter.git#allow-setting-max-message-size"
   },
   "scripts": {
     "start": "micro -l tcp://0.0.0.0:3000"
