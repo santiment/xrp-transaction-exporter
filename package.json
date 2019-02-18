@@ -21,6 +21,7 @@
   "homepage": "https://github.com/santiment/xrp-transactions-exporter",
   "dependencies": {
     "micro": "^9.3.3",
+    "p-queue": "^3.0.0",
     "rippled-ws-client": "^1.0.0",
     "san-exporter": "git+https://github.com/santiment/san-exporter.git#allow-setting-max-message-size"
   },

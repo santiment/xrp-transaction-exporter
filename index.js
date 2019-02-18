@@ -3,76 +3,68 @@ const { send } = require('micro')
 const url = require('url')
 const { Exporter } = require('san-exporter')
 const Client = require('rippled-ws-client')
+const PQueue = require('p-queue')
 
 const exporter = new Exporter(pkg.name)
+
+const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
+const DEFAULT_WS_TIMEOUT = 500
+
+const requestQueue = new PQueue({ concurrency: SEND_BATCH_SIZE})
 
 const XRPLNodeUrl = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
 let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
 }
 
-const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
-const DEFAULT_WS_TIMEOUT = 500
-
 console.log('Fetch XRPL transactions')
+
+const connectionSend = async (connection, params, timeout) =>
+  requestQueue.add(() => connection.send(params, timeout))
   
-const fetchLedgerTransactions = (connection, ledger_index) => {
-  return new Promise((resolve, reject) => {
-    return connection.send({
-      command: 'ledger',
-      ledger_index: parseInt(ledger_index),
-      transactions: true,
-      expand: false
-    }, DEFAULT_WS_TIMEOUT).then(({ledger}) => {
-      if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
-        // Do nothing
-        resolve({ ledger: ledger, transactions: [] })
-        return
-      } else {
-        if (ledger.transactions.length > 200) {
-          // Lots of data. Per TX
-          console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
-          let transactions = ledger.transactions.map(Tx => {
-            return connection.send({
-              command: 'tx',
-              transaction: Tx
-            }, DEFAULT_WS_TIMEOUT)
-          })
-          Promise.all(transactions).then(r => {
-            let allTxs = r.filter(t => {
-              return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
-            })
-            console.log(`>>> ALL SUCCESSFUL TXS FETCHED for ${ledger_index}: ${allTxs.length}`, )
-            resolve({ ledger: ledger, transactions: allTxs.map(t => {
-              return Object.assign(t, {
-                metaData: t.meta
-              })
-            }) })
-            return
-          })
-          .catch(reject)
-        } else {
-          // Fetch at once.
-          resolve(new Promise((resolve, reject) => {
-            connection.send({
-              command: 'ledger',
-              ledger_index: parseInt(ledger_index),
-              transactions: true,
-              expand: true
-            }, DEFAULT_WS_TIMEOUT).then(Result => {
-              resolve({ ledger: ledger, transactions: Result.ledger.transactions })
-              return
-            }).catch(reject)
-          }))
-        }
-      }
-      return
-    }).catch(reject)
-  })
+const fetchLedgerTransactions = async (connection, ledger_index) => {
+  let { ledger } = await connectionSend(connection, {
+    command: 'ledger',
+    ledger_index: parseInt(ledger_index),
+    transactions: true,
+    expand: false
+  }, DEFAULT_WS_TIMEOUT)
+
+  if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
+    // Do nothing
+    return { ledger: ledger, transactions: [] }
+  }
+
+  if (ledger.transactions.length > 200) {
+    // Lots of data. Per TX
+    console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
+    let transactions = ledger.transactions.map(Tx =>
+      connectionSend(connection, { command: 'tx', transaction: Tx }, DEFAULT_WS_TIMEOUT)
+    )
+
+    transactions = await Promise.all(transactions)
+
+    transactions = transactions.filter(t => {
+      return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
+    })
+    console.log(`>>> ALL SUCCESSFUL TXS FETCHED for ${ledger_index}: ${transactions.length}`, )
+
+    return { ledger, transactions }
+  }
+
+  // Fetch at once.
+  let result = await connectionSend(connection, {
+    command: 'ledger',
+    ledger_index: parseInt(ledger_index),
+    transactions: true,
+    expand: true
+  }, DEFAULT_WS_TIMEOUT)
+
+  return { ledger: ledger, transactions: result.ledger.transactions }
 }
 
 async function work(connection) {
-  const currentLedger = await connection.send({
+  const currentLedger = await connectionSend(connection, {
     command: 'ledger',
     ledger_index: 'validated',
     transactions: true,
