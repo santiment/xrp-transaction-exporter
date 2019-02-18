@@ -12,6 +12,7 @@ let lastProcessedPosition = {
 }
 
 const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
+const DEFAULT_WS_TIMEOUT = 500
 
 console.log('Fetch XRPL transactions')
   
@@ -22,7 +23,7 @@ const fetchLedgerTransactions = (connection, ledger_index) => {
       ledger_index: parseInt(ledger_index),
       transactions: true,
       expand: false
-    }, 10).then(({ledger}) => {
+    }, DEFAULT_WS_TIMEOUT).then(({ledger}) => {
       if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
         // Do nothing
         resolve({ ledger: ledger, transactions: [] })
@@ -35,13 +36,13 @@ const fetchLedgerTransactions = (connection, ledger_index) => {
             return connection.send({
               command: 'tx',
               transaction: Tx
-            }, 10)
+            }, DEFAULT_WS_TIMEOUT)
           })
           Promise.all(transactions).then(r => {
             let allTxs = r.filter(t => {
               return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
             })
-            console.log('>>> ALL TXS FETCHED:', allTxs.length)
+            console.log(`>>> ALL SUCCESSFUL TXS FETCHED for ${ledger_index}: ${allTxs.length}`, )
             resolve({ ledger: ledger, transactions: allTxs.map(t => {
               return Object.assign(t, {
                 metaData: t.meta
@@ -49,6 +50,7 @@ const fetchLedgerTransactions = (connection, ledger_index) => {
             }) })
             return
           })
+          .catch(reject)
         } else {
           // Fetch at once.
           resolve(new Promise((resolve, reject) => {
@@ -57,7 +59,7 @@ const fetchLedgerTransactions = (connection, ledger_index) => {
               ledger_index: parseInt(ledger_index),
               transactions: true,
               expand: true
-            }, 10).then(Result => {
+            }, DEFAULT_WS_TIMEOUT).then(Result => {
               resolve({ ledger: ledger, transactions: Result.ledger.transactions })
               return
             }).catch(reject)
@@ -75,7 +77,7 @@ async function work(connection) {
     ledger_index: 'validated',
     transactions: true,
     expand: false
-  }, 10)
+  }, DEFAULT_WS_TIMEOUT)
 
   const currentBlock = parseInt(currentLedger.ledger.ledger_index)
   const requests = []
@@ -87,7 +89,7 @@ async function work(connection) {
 
     if (requests.length >= SEND_BATCH_SIZE || lastProcessedPosition.blockNumber + requests.length == currentBlock) {
       const ledgers = await Promise.all(requests).map(async ({ledger, transactions}) => {
-        console.log(`${transactions.length > 0 ? 'Transactions in' : ' '.repeat(15)} ${ledger.ledger_index}: `, transactions.length > 0 ? transactions.length : '-')
+        console.log(`Transactions in ${ledger.ledger_index}: ${transactions.length}`)
         return { ledger, transactions, primaryKey: ledger.ledger_index }
       })
 
