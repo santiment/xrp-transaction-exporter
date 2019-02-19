@@ -2,32 +2,34 @@ const pkg = require('./package.json');
 const { send } = require('micro')
 const url = require('url')
 const { Exporter } = require('san-exporter')
-const Client = require('rippled-ws-client')
+const RippleAPI = require('ripple-lib').RippleAPI
 const PQueue = require('p-queue')
 const metrics = require('./src/metrics')
 
 const exporter = new Exporter(pkg.name)
 
 const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
-const DEFAULT_WS_TIMEOUT = 500
+const DEFAULT_WS_TIMEOUT = parseInt(process.env.DEFAULT_WS_TIMEOUT || "10000")
 const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
 const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
+const XRP_NODE_URL = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
 
 const connections = []
 
-const XRPLNodeUrl = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
 let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
 }
 
 console.log('Fetch XRPL transactions')
 
-const connectionSend = (async ({connection, queue, index}, params, timeout) => {
+const connectionSend = (async ({connection, queue, index}, params) => {
   metrics.requestsCounter.labels(index).inc()
 
   const startTime = new Date()
   return queue.add(() => {
-    return connection.send(params, timeout)
+    const { command, ...arguments } = params
+
+    return connection.request(command, arguments)
   }).then((result) => {
     metrics.requestsResponseTime.labels(index).observe(new Date() - startTime)
 
@@ -41,7 +43,7 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     ledger_index: parseInt(ledger_index),
     transactions: true,
     expand: false
-  }, DEFAULT_WS_TIMEOUT)
+  })
 
   if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
     // Do nothing
@@ -52,7 +54,7 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     // Lots of data. Per TX
     console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
     let transactions = ledger.transactions.map(Tx =>
-      connectionSend(connection, { command: 'tx', transaction: Tx }, DEFAULT_WS_TIMEOUT)
+      connectionSend(connection, { command: 'tx', transaction: Tx })
     )
 
     transactions = await Promise.all(transactions)
@@ -70,7 +72,7 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     ledger_index: parseInt(ledger_index),
     transactions: true,
     expand: true
-  }, DEFAULT_WS_TIMEOUT)
+  })
 
   return { ledger: ledger, transactions: result.ledger.transactions }
 }
@@ -81,7 +83,7 @@ async function work() {
     ledger_index: 'validated',
     transactions: true,
     expand: false
-  }, DEFAULT_WS_TIMEOUT)
+  })
 
   const currentBlock = parseInt(currentLedger.ledger.ledger_index)
   const requests = []
@@ -138,8 +140,15 @@ const init = async () => {
   metrics.startCollection()
 
   for (let i = 0;i < CONNECTIONS_COUNT;i++) {
+    const api = new RippleAPI({
+      server: XRP_NODE_URL,
+      timeout: DEFAULT_WS_TIMEOUT
+    })
+
+    await api.connect()
+
     connections.push({
-      connection: await new Client(XRPLNodeUrl),
+      connection: api,
       queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
       index: i
     })
