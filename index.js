@@ -59,7 +59,13 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
         transaction: Tx,
         minLedgerVersion: ledger_index,
         maxLedgerVersion: ledger_index
-      }).catch((response) => response.error == 'txnNotFound' ? null : raise(response))
+      }).catch((error) => {
+        if (error.message === 'txnNotFound') {
+          return Promise.resolve(null)
+        }
+
+        return Promise.reject(error)
+      })
     )
 
     transactions = await Promise.all(transactions)
