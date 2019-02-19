@@ -4,13 +4,16 @@ const url = require('url')
 const { Exporter } = require('san-exporter')
 const Client = require('rippled-ws-client')
 const PQueue = require('p-queue')
+const metrics = require('./src/metrics')
 
 const exporter = new Exporter(pkg.name)
 
 const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
 const DEFAULT_WS_TIMEOUT = 500
+const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
+const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
 
-const requestQueue = new PQueue({ concurrency: SEND_BATCH_SIZE})
+const connections = []
 
 const XRPLNodeUrl = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
 let lastProcessedPosition = {
@@ -19,8 +22,18 @@ let lastProcessedPosition = {
 
 console.log('Fetch XRPL transactions')
 
-const connectionSend = async (connection, params, timeout) =>
-  requestQueue.add(() => connection.send(params, timeout))
+const connectionSend = (async ({connection, queue, index}, params, timeout) => {
+  metrics.requestsCounter.labels(index).inc()
+
+  const startTime = new Date()
+  return queue.add(() => {
+    return connection.send(params, timeout)
+  }).then((result) => {
+    metrics.requestsResponseTime.labels(index).observe(new Date() - startTime)
+
+    return result
+  })
+})
   
 const fetchLedgerTransactions = async (connection, ledger_index) => {
   let { ledger } = await connectionSend(connection, {
@@ -47,7 +60,6 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     transactions = transactions.filter(t => {
       return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
     })
-    console.log(`>>> ALL SUCCESSFUL TXS FETCHED for ${ledger_index}: ${transactions.length}`, )
 
     return { ledger, transactions }
   }
@@ -63,8 +75,8 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
   return { ledger: ledger, transactions: result.ledger.transactions }
 }
 
-async function work(connection) {
-  const currentLedger = await connectionSend(connection, {
+async function work() {
+  const currentLedger = await connectionSend(connections[0], {
     command: 'ledger',
     ledger_index: 'validated',
     transactions: true,
@@ -77,11 +89,15 @@ async function work(connection) {
   console.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
 
   while (lastProcessedPosition.blockNumber + requests.length < currentBlock) {
-    requests.push(fetchLedgerTransactions(connection, lastProcessedPosition.blockNumber + requests.length))
+    const ledgerToDownload = lastProcessedPosition.blockNumber + requests.length
 
-    if (requests.length >= SEND_BATCH_SIZE || lastProcessedPosition.blockNumber + requests.length == currentBlock) {
+    requests.push(fetchLedgerTransactions(connections[ledgerToDownload % connections.length], ledgerToDownload))
+
+    if (requests.length >= SEND_BATCH_SIZE || ledgerToDownload == currentBlock) {
       const ledgers = await Promise.all(requests).map(async ({ledger, transactions}) => {
-        console.log(`Transactions in ${ledger.ledger_index}: ${transactions.length}`)
+        metrics.transactionsCounter.inc(transactions.length)
+        metrics.ledgersCounter.inc()
+
         return { ledger, transactions, primaryKey: ledger.ledger_index }
       })
 
@@ -108,8 +124,8 @@ async function initLastProcessedLedger() {
   }
 }
 
-const fetchEvents = (connection) => {
-  return work(connection)
+const fetchEvents = () => {
+  return work()
     .then(() => {
       console.log(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
 
@@ -119,10 +135,19 @@ const fetchEvents = (connection) => {
 }
 
 const init = async () => {
-  const connection = await new Client(XRPLNodeUrl)
+  metrics.startCollection()
+
+  for (let i = 0;i < CONNECTIONS_COUNT;i++) {
+    connections.push({
+      connection: await new Client(XRPLNodeUrl),
+      queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
+      index: i
+    })
+  }
+
   await exporter.connect()
   await initLastProcessedLedger()
-  await fetchEvents(connection)
+  await fetchEvents()
 }
 
 init()
@@ -145,6 +170,19 @@ module.exports = async (request, response) => {
       return healthcheckKafka()
         .then(() => send(response, 200, "ok"))
         .catch((err) => send(response, 500, `Connection to kafka failed: ${err}`))
+
+    case '/metrics':
+      metrics.currentLedger.set(lastProcessedPosition.blockNumber)
+
+      for (let i = 0;i < CONNECTIONS_COUNT;i++) {
+        if (connections[i]) {
+          const { queue, index } = connections[i]
+          metrics.currentRequestQueueSize.labels(index).set(queue.size)
+        }
+      }
+
+      response.setHeader('Content-Type', metrics.register.contentType);
+      return send(response, 200, metrics.register.metrics())
 
     default:
       return send(response, 404, 'Not found');
