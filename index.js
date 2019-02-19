@@ -54,14 +54,18 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     // Lots of data. Per TX
     console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
     let transactions = ledger.transactions.map(Tx =>
-      connectionSend(connection, { command: 'tx', transaction: Tx })
+      connectionSend(connection, {
+        command: 'tx',
+        transaction: Tx,
+        minLedgerVersion: ledger_index,
+        maxLedgerVersion: ledger_index
+      }).catch((response) => response.error == 'txnNotFound' ? null : raise(response))
     )
 
     transactions = await Promise.all(transactions)
 
-    transactions = transactions.filter(t => {
-      return typeof t.error === 'undefined' && typeof t.meta !== 'undefined' && typeof t.meta.TransactionResult !== 'undefined'
-    })
+    // Filter out the transactions failed transactions
+    transactions = transactions.filter(t => t)
 
     return { ledger, transactions }
   }
