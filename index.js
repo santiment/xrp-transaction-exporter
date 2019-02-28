@@ -100,7 +100,7 @@ async function work() {
 
   console.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
 
-  while (lastProcessedPosition.blockNumber + requests.length < currentBlock) {
+  while (lastProcessedPosition.blockNumber + requests.length <= currentBlock) {
     const ledgerToDownload = lastProcessedPosition.blockNumber + requests.length
 
     requests.push(fetchLedgerTransactions(connections[ledgerToDownload % connections.length], ledgerToDownload))
