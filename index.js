@@ -5,6 +5,7 @@ const { Exporter } = require('san-exporter')
 const RippleAPI = require('ripple-lib').RippleAPI
 const PQueue = require('p-queue')
 const metrics = require('./src/metrics')
+const assert = require('assert')
 
 const exporter = new Exporter(pkg.name)
 
@@ -45,6 +46,8 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     expand: false
   })
 
+  assert(ledger.closed == true)
+
   if (typeof ledger.transactions === 'undefined' || ledger.transactions.length === 0) {
     // Do nothing
     return { ledger: ledger, transactions: [] }
@@ -83,6 +86,8 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     transactions: true,
     expand: true
   })
+
+  assert(result.ledger.closed == true)
 
   return { ledger: ledger, transactions: result.ledger.transactions }
 }
