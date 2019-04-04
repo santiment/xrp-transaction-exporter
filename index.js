@@ -87,6 +87,8 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
     expand: true
   })
 
+  assert(result.ledger.closed == true)
+
   return { ledger: ledger, transactions: result.ledger.transactions }
 }
 
