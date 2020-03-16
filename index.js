@@ -1,7 +1,7 @@
 const pkg = require('./package.json');
 const { send } = require('micro')
 const url = require('url')
-const { Exporter } = require('san-exporter')
+const { Exporter } = require('@santiment-network/san-exporter')
 const RippleAPI = require('ripple-lib').RippleAPI
 const PQueue = require('p-queue')
 const metrics = require('./src/metrics')
@@ -92,6 +92,24 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
   return { ledger: ledger, transactions: result.ledger.transactions }
 }
 
+function checkAllTransactionsValid(ledgers) {
+  for (indexLedger = 0; indexLedger < ledgers.length; indexLedger++) {
+    transactions = ledgers[indexLedger].transactions
+    blockNumber = ledgers[indexLedger].ledger_index
+    for (index = 0; index < transactions.length; index++) {
+      const transaction = transactions[index]
+      if(transaction.hasOwnProperty('validated') && !transaction.validated) {
+        console.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is not validated. Aborting.`)
+        process.exit(-1)
+      }
+      if(!transaction.hasOwnProperty('meta') && !transaction.hasOwnProperty('metaData')) {
+        console.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is missing 'meta' field. Aborting.`)
+        process.exit(-1)
+      }
+    }
+  }
+}
+
 async function work() {
   const currentLedger = await connectionSend(connections[0], {
     command: 'ledger',
@@ -117,6 +135,8 @@ async function work() {
 
         return { ledger, transactions, primaryKey: ledger.ledger_index }
       })
+
+      checkAllTransactionsValid(ledgers);
 
       console.log(`Flushing ledgers ${ledgers[0].primaryKey}:${ledgers[ledgers.length - 1].primaryKey}`)
       await exporter.sendDataWithKey(ledgers, "primaryKey")
