@@ -17,11 +17,9 @@ podTemplate(label: 'xrp-transactions-exporter', containers: [
 
           sh "docker build -t ${awsRegistry}/xrp-transactions-exporter:${env.BRANCH_NAME} -t ${awsRegistry}/xrp-transactions-exporter:${scmVars.GIT_COMMIT} ."
 
-          if (env.BRANCH_NAME == "master") {
-            docker.withRegistry("https://${awsRegistry}", "ecr:eu-central-1:ecr-credentials") {
-              sh "docker push ${awsRegistry}/xrp-transactions-exporter:${env.BRANCH_NAME}"
-              sh "docker push ${awsRegistry}/xrp-transactions-exporter:${scmVars.GIT_COMMIT}"
-            }
+          docker.withRegistry("https://${awsRegistry}", "ecr:eu-central-1:ecr-credentials") {
+            sh "docker push ${awsRegistry}/xrp-transactions-exporter:${env.BRANCH_NAME}"
+            sh "docker push ${awsRegistry}/xrp-transactions-exporter:${scmVars.GIT_COMMIT}"
           }
         }
       }
