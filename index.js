@@ -14,12 +14,15 @@ const DEFAULT_WS_TIMEOUT = parseInt(process.env.DEFAULT_WS_TIMEOUT || "10000")
 const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
 const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
 const XRP_NODE_URL = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
+const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 * 5)     // 5 minutes
 
 const connections = []
 
 let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
 }
+// To prevent healthcheck failing during initialization and processing first part of data, we set lastExportTime to current time.
+let lastExportTime = Date.now()
 
 console.log('Fetch XRPL transactions')
 
@@ -37,7 +40,7 @@ const connectionSend = (async ({connection, queue, index}, params) => {
     return result
   })
 })
-  
+
 const fetchLedgerTransactions = async (connection, ledger_index) => {
   let { ledger } = await connectionSend(connection, {
     command: 'ledger',
@@ -141,6 +144,7 @@ async function work() {
       console.log(`Flushing ledgers ${ledgers[0].primaryKey}:${ledgers[ledgers.length - 1].primaryKey}`)
       await exporter.sendDataWithKey(ledgers, "primaryKey")
 
+      lastExportTime = Date.now()
       lastProcessedPosition.blockNumber += ledgers.length
       await exporter.savePosition(lastProcessedPosition)
 
@@ -197,13 +201,22 @@ const init = async () => {
 init()
 
 const healthcheckKafka = () => {
-  return new Promise((resolve, reject) => {
-    if (exporter.producer.isConnected()) {
-      resolve()
-    } else {
-      reject("Kafka client is not connected to any brokers")
-    }
-  })
+  if (exporter.producer.isConnected()) {
+    return Promise.resolve()
+  } else {
+    return Promise.reject("Kafka client is not connected to any brokers")
+  }
+}
+
+const healthcheckExportTimeout = () => {
+  const timeFromLastExport = Date.now() - lastExportTime
+  const isExportTimeoutExceeded = timeFromLastExport > EXPORT_TIMEOUT_MLS
+  console.debug(`isExportTimeoutExceeded ${isExportTimeoutExceeded}, timeFromLastExport: ${timeFromLastExport}ms`)
+  if (isExportTimeoutExceeded) {
+    return Promise.reject(`Time from the last export ${timeFromLastExport}ms exceeded limit  ${EXPORT_TIMEOUT_MLS}ms.`)
+  } else {
+    return Promise.resolve()
+  }
 }
 
 module.exports = async (request, response) => {
@@ -212,15 +225,16 @@ module.exports = async (request, response) => {
   switch (req.pathname) {
     case '/healthcheck':
       return healthcheckKafka()
-        .then(() => send(response, 200, "ok"))
-        .catch((err) => send(response, 500, `Connection to kafka failed: ${err}`))
+          .then(() => healthcheckExportTimeout())
+          .then(() => send(response, 200, "ok"))
+          .catch((err) => send(response, 500, `Connection to kafka failed: ${err}`))
 
     case '/metrics':
       metrics.currentLedger.set(lastProcessedPosition.blockNumber)
 
-      for (let i = 0;i < CONNECTIONS_COUNT;i++) {
+      for (let i = 0; i < CONNECTIONS_COUNT; i++) {
         if (connections[i]) {
-          const { queue, index } = connections[i]
+          const {queue, index} = connections[i]
           metrics.currentRequestQueueSize.labels(index).set(queue.size)
         }
       }
