@@ -1,6 +1,6 @@
 # XRP Transactions Exporter
 
-This code allows you to fetch all transactions from the XRP ledger and dump it into kafka.
+This code allows you to fetch all transactions from the XRP ledger and dump them into kafka.
 
 ## Run
 
@@ -14,13 +14,13 @@ $ ./bin/run.sh
 
 You can configure the service with the following ENV variables:
 
-* LEDGER - block numer from which to start the data extraction. Default: `32570`
-* XRP\_NODE\_URL - XRP node url. Default: `wss://s2.ripple.com`
-* MAX\_CONNECTION\_CONCURRENCY - **DESCRIBE** Default: `10`
-* CONNECTIONS\_COUNT - **DESCRIBE** Default: `1`
-* DEFAULT\_WS\_TIMEOUT - **DESCRIBE** Default: `10000`
-* SEND\_BATCH\_SIZE - **DESCRIBE** Default: `30`
-* EXPORT\_TIMEOUT\_MLS - max time interval between successful data pushing to kafka to treat the service as healthy. Default: `1000 * 60 * 5, 5 minutes`
+* `LEDGER` - block numer from which to start the data extraction. Default: `32570`
+* `XRP_NODE_URL` - XRP node url. Default: `wss://s2.ripple.com`
+* `MAX_CONNECTION_CONCURRENCY` - **DESCRIBE** Default: `10`
+* `CONNECTIONS_COUNT` - **DESCRIBE** Default: `1`
+* `DEFAULT_WS_TIMEOUT` - **DESCRIBE** Default: `10000`
+* `SEND_BATCH_SIZE` - **DESCRIBE** Default: `30`
+* `EXPORT_TIMEOUT_MLS` - max time interval between successful data pushing to kafka to treat the service as healthy. Default: `1000 * 60 * 5, 5 minutes`
 
 
 #### Health checks
