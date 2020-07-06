@@ -1,10 +1,11 @@
 const pkg = require('./package.json');
 const { send } = require('micro')
 const url = require('url')
-const { Exporter } = require('@santiment-network/san-exporter')
+const { Exporter } = require('san-exporter')
 const RippleAPI = require('ripple-lib').RippleAPI
 const PQueue = require('p-queue')
 const metrics = require('./src/metrics')
+const { logger } = require('./logger')
 const assert = require('assert')
 
 const exporter = new Exporter(pkg.name)
@@ -24,7 +25,7 @@ let lastProcessedPosition = {
 // To prevent healthcheck failing during initialization and processing first part of data, we set lastExportTime to current time.
 let lastExportTime = Date.now()
 
-console.log('Fetch XRPL transactions')
+logger.info('Fetching XRPL transactions...')
 
 const connectionSend = (async ({connection, queue, index}, params) => {
   metrics.requestsCounter.labels(index).inc()
@@ -58,7 +59,7 @@ const fetchLedgerTransactions = async (connection, ledger_index) => {
 
   if (ledger.transactions.length > 200) {
     // Lots of data. Per TX
-    console.log(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
+    logger.info(`<<< MANY TXS at ledger ${ledger_index}: [[ ${ledger.transactions.length} ]], processing per-tx...`)
     let transactions = ledger.transactions.map(Tx =>
       connectionSend(connection, {
         command: 'tx',
@@ -102,11 +103,11 @@ function checkAllTransactionsValid(ledgers) {
     for (index = 0; index < transactions.length; index++) {
       const transaction = transactions[index]
       if(transaction.hasOwnProperty('validated') && !transaction.validated) {
-        console.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is not validated. Aborting.`)
+        logger.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is not validated. Aborting.`)
         process.exit(-1)
       }
       if(!transaction.hasOwnProperty('meta') && !transaction.hasOwnProperty('metaData')) {
-        console.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is missing 'meta' field. Aborting.`)
+        logger.error(`Transaction ${transaction.hash} at index ${index} in block ${ledgers[indexLedger].ledger.ledger_index} is missing 'meta' field. Aborting.`)
         process.exit(-1)
       }
     }
@@ -124,7 +125,7 @@ async function work() {
   const currentBlock = parseInt(currentLedger.ledger.ledger_index)
   const requests = []
 
-  console.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
+  logger.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
 
   while (lastProcessedPosition.blockNumber + requests.length <= currentBlock) {
     const ledgerToDownload = lastProcessedPosition.blockNumber + requests.length
@@ -141,7 +142,7 @@ async function work() {
 
       checkAllTransactionsValid(ledgers);
 
-      console.log(`Flushing ledgers ${ledgers[0].primaryKey}:${ledgers[ledgers.length - 1].primaryKey}`)
+      logger.info(`Flushing ledgers ${ledgers[0].primaryKey}:${ledgers[ledgers.length - 1].primaryKey}`)
       await exporter.sendDataWithKey(ledgers, "primaryKey")
 
       lastExportTime = Date.now()
@@ -158,17 +159,17 @@ async function initLastProcessedLedger() {
 
   if (lastPosition) {
     lastProcessedPosition = lastPosition
-    console.info(`Resuming export from position ${JSON.stringify(lastPosition)}`)
+    logger.info(`Resuming export from position ${JSON.stringify(lastPosition)}`)
   } else {
     await exporter.savePosition(lastProcessedPosition)
-    console.info(`Initialized exporter with initial position ${JSON.stringify(lastProcessedPosition)}`)
+    logger.info(`Initialized exporter with initial position ${JSON.stringify(lastProcessedPosition)}`)
   }
 }
 
 const fetchEvents = () => {
   return work()
     .then(() => {
-      console.log(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
+      logger.log(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
 
       // Look for new events every 1 sec
       setTimeout(fetchEvents, 1000)
@@ -211,7 +212,7 @@ const healthcheckKafka = () => {
 const healthcheckExportTimeout = () => {
   const timeFromLastExport = Date.now() - lastExportTime
   const isExportTimeoutExceeded = timeFromLastExport > EXPORT_TIMEOUT_MLS
-  console.debug(`isExportTimeoutExceeded ${isExportTimeoutExceeded}, timeFromLastExport: ${timeFromLastExport}ms`)
+  logger.debug(`isExportTimeoutExceeded ${isExportTimeoutExceeded}, timeFromLastExport: ${timeFromLastExport}ms`)
   if (isExportTimeoutExceeded) {
     return Promise.reject(`Time from the last export ${timeFromLastExport}ms exceeded limit  ${EXPORT_TIMEOUT_MLS}ms.`)
   } else {
