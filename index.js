@@ -236,7 +236,7 @@ module.exports = async (request, response) => {
       for (let i = 0; i < CONNECTIONS_COUNT; i++) {
         if (connections[i]) {
           const {queue, index} = connections[i]
-          metrics.currentRequestQueueSize.labels(index).set(queue.size)
+          metrics.requestsQueueSize.labels(index).set(queue.size)
         }
       }
 
