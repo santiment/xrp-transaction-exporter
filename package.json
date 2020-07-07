@@ -24,7 +24,7 @@
     "micro": "^9.3.4",
     "p-queue": "^3.2.0",
     "prom-client": "^11.5.3",
-    "ripple-lib": "^1.8.0"
+    "ripple-lib": "~1.1.2"
   },
   "scripts": {
     "start": "micro -l tcp://0.0.0.0:3000"
