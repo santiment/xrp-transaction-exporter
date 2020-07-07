@@ -4,7 +4,7 @@ const url = require('url')
 const { Exporter } = require('san-exporter')
 const RippleAPI = require('ripple-lib').RippleAPI
 const PQueue = require('p-queue')
-const metrics = require('./src/metrics')
+const metrics = require('san-exporter/metrics')
 const { logger } = require('./logger')
 const assert = require('assert')
 
@@ -123,6 +123,7 @@ async function work() {
   })
 
   const currentBlock = parseInt(currentLedger.ledger.ledger_index)
+  metrics.currentBlock.set(currentBlock)
   const requests = []
 
   logger.info(`Fetching transfers for interval ${lastProcessedPosition.blockNumber}:${currentBlock}`)
@@ -134,8 +135,8 @@ async function work() {
 
     if (requests.length >= SEND_BATCH_SIZE || ledgerToDownload == currentBlock) {
       const ledgers = await Promise.all(requests).map(async ({ledger, transactions}) => {
-        metrics.transactionsCounter.inc(transactions.length)
-        metrics.ledgersCounter.inc()
+        metrics.downloadedTransactionsCounter.inc(transactions.length)
+        metrics.downloadedBlocksCounter.inc()
 
         return { ledger, transactions, primaryKey: ledger.ledger_index }
       })
@@ -148,6 +149,7 @@ async function work() {
       lastExportTime = Date.now()
       lastProcessedPosition.blockNumber += ledgers.length
       await exporter.savePosition(lastProcessedPosition)
+      metrics.lastExportedBlock.set(lastProcessedPosition.blockNumber)
 
       requests.length = 0
     }
