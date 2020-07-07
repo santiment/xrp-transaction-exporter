@@ -233,8 +233,6 @@ module.exports = async (request, response) => {
           .catch((err) => send(response, 500, `Connection to kafka failed: ${err}`))
 
     case '/metrics':
-      metrics.currentLedger.set(lastProcessedPosition.blockNumber)
-
       for (let i = 0; i < CONNECTIONS_COUNT; i++) {
         if (connections[i]) {
           const {queue, index} = connections[i]
