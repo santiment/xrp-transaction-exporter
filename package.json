@@ -20,16 +20,17 @@
   },
   "homepage": "https://github.com/santiment/xrp-transactions-exporter",
   "dependencies": {
-    "san-exporter": "santiment/san-exporter",
-    "micro": "^9.3.3",
-    "p-queue": "^3.0.0",
-    "prom-client": "^11.2.1",
-    "ripple-lib": "^1.1.2"
+    "@santiment-network/san-exporter": "github:santiment/san-exporter",
+    "micro": "^9.3.4",
+    "p-queue": "^3.2.0",
+    "prom-client": "^11.5.3",
+    "ripple-lib": "^1.8.0",
+    "san-exporter": "santiment/san-exporter"
   },
   "scripts": {
     "start": "micro -l tcp://0.0.0.0:3000"
   },
   "devDependencies": {
-    "nodemon": "^1.12.7"
+    "nodemon": "^1.19.4"
   }
 }
