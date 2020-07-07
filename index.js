@@ -16,6 +16,9 @@ const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
 const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
 const XRP_NODE_URL = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
 const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 * 5)     // 5 minutes
+// Although we request the last 'validated' block we are seeing blocks which are neither validated nor even closed. We introduce this extra delay to prevent this.
+// In terms of time, this is a delay between 1 and 2 minutes.
+const EXTRA_CONFIRMATIONS_BLOCKS = parseInt(process.env.CONFIRMATIONS || "20")
 
 const connections = []
 
@@ -122,7 +125,7 @@ async function work() {
     expand: false
   })
 
-  const currentBlock = parseInt(currentLedger.ledger.ledger_index)
+  const currentBlock = parseInt(currentLedger.ledger.ledger_index) - EXTRA_CONFIRMATIONS_BLOCKS
   metrics.currentBlock.set(currentBlock)
   const requests = []
 
