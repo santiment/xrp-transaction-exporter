@@ -171,7 +171,7 @@ async function initLastProcessedLedger() {
 const fetchEvents = () => {
   return work()
     .then(() => {
-      logger.log(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
+      logger.info(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
 
       // Look for new events every 1 sec
       setTimeout(fetchEvents, 1000)
