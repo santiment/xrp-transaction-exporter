@@ -22,7 +22,7 @@ const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || "20")
 
 let connections = []
-// Go over endoints on error
+// Go over endpoints on error
 let apiURLToUse = 0
 
 let lastProcessedPosition = {
@@ -195,7 +195,7 @@ async function createNewSetConnections() {
   connections = []
 
   if ( apiURLToUse >= nodeURLs.length) {
-    // We just tried the last endpoint. Throw exception. Re-start the Pod.
+    // No more endpoints to try. Throw exception. Re-start the Pod.
     throw "Error: All API URLs returned error."
   }
 
