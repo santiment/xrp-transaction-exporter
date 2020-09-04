@@ -15,13 +15,15 @@ const DEFAULT_WS_TIMEOUT = parseInt(process.env.DEFAULT_WS_TIMEOUT || "10000")
 const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
 const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
 // A comma separated list of Ripple API endpoints.
-const XRP_NODE_URLS = process.env.XRP_NODE_URLS || 'wss://xrpl.ws'
+const XRP_NODE_URLS = process.env.XRP_NODE_URLS || 'wss://s2.ripple.com'
 const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 * 5)     // 5 minutes
 // Although we request the last 'validated' block we are seeing blocks which are neither validated nor even closed. We introduce this extra delay to prevent this.
 // In terms of time, 20 blocks is a delay between 1 and 2 minutes.
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || "20")
 
-const connections = []
+let connections = []
+// Go over endoints on error
+let apiURLToUse = 0
 
 let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
@@ -172,52 +174,57 @@ async function initLastProcessedLedger() {
   }
 }
 
-const fetchEvents = () => {
-  return work()
-    .then(() => {
-      logger.info(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
+async function fetchEvents() {
+  try {
+    await work()
+  }
+  catch(ex) {
+    logger.error(ex)
+    // This can throw if no more API endpoints left
+    await createNewSetConnections();
+  }
 
-      // Look for new events every 1 sec
-      setTimeout(fetchEvents, 1000)
+  logger.info(`Progressed to position ${JSON.stringify(lastProcessedPosition)}`)
+
+  // Look for new events every 1 sec
+  setTimeout(fetchEvents, 1000)
+}
+
+async function createNewSetConnections() {
+  var nodeURLs = XRP_NODE_URLS.split(",");
+  connections = []
+
+  if ( apiURLToUse >= nodeURLs.length) {
+    // We just tried the last endpoint. Throw exception. Re-start the Pod.
+    throw "Error: All API URLs returned error."
+  }
+
+  logger.info(`Using ${nodeURLs[apiURLToUse]} as Ripple API point.`)
+  for (let i = 0; i < CONNECTIONS_COUNT; i++) {
+    const api = new RippleAPI({
+      server: nodeURLs[apiURLToUse],
+      timeout: DEFAULT_WS_TIMEOUT
     })
+
+    await api.connect()
+
+    connections.push({
+      connection: api,
+      queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
+      index: i
+    })
+  }
+
+  apiURLToUse += 1;
 }
 
 const init = async () => {
   metrics.startCollection()
+  await createNewSetConnections()
 
-  var nodeURLs = XRP_NODE_URLS.split(",");
-
-  // We would iterate here only on error. In which case next endpoint will be tried.
-  for (let index = 0; index < nodeURLs.length; index++) {
-    logger.info(`Using ${nodeURLs[index]} as Ripple API point.`)
-    for (let i = 0;i < CONNECTIONS_COUNT;i++) {
-      const api = new RippleAPI({
-        server: nodeURLs[index],
-        timeout: DEFAULT_WS_TIMEOUT
-      })
-
-      await api.connect()
-
-      connections.push({
-        connection: api,
-        queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
-        index: i
-      })
-    }
-
-    await exporter.connect()
-    await initLastProcessedLedger()
-    try {
-      await fetchEvents()
-    }
-    catch(ex) {
-      logger.error(ex)
-      if ( index == nodeURLs.length - 1) {
-        // We just tried the last endpoint. Throw exception. Re-start the Pod.
-        throw ex
-      }
-    }
-  }
+  await exporter.connect()
+  await initLastProcessedLedger()
+  await fetchEvents()
 }
 
 init()
