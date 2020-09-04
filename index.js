@@ -14,7 +14,8 @@ const SEND_BATCH_SIZE = parseInt(process.env.SEND_BATCH_SIZE || "30")
 const DEFAULT_WS_TIMEOUT = parseInt(process.env.DEFAULT_WS_TIMEOUT || "10000")
 const CONNECTIONS_COUNT = parseInt(process.env.CONNECTIONS_COUNT || "1")
 const MAX_CONNECTION_CONCURRENCY = parseInt(process.env.MAX_CONNECTION_CONCURRENCY || "10")
-const XRP_NODE_URL = process.env.XRP_NODE_URL || 'wss://s2.ripple.com'
+// A comma separated list of Ripple API endpoints.
+const XRP_NODE_URLS = process.env.XRP_NODE_URLS || 'wss://xrpl.ws'
 const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 * 5)     // 5 minutes
 // Although we request the last 'validated' block we are seeing blocks which are neither validated nor even closed. We introduce this extra delay to prevent this.
 // In terms of time, 20 blocks is a delay between 1 and 2 minutes.
@@ -184,24 +185,39 @@ const fetchEvents = () => {
 const init = async () => {
   metrics.startCollection()
 
-  for (let i = 0;i < CONNECTIONS_COUNT;i++) {
-    const api = new RippleAPI({
-      server: XRP_NODE_URL,
-      timeout: DEFAULT_WS_TIMEOUT
-    })
+  var nodeURLs = XRP_NODE_URLS.split(",");
 
-    await api.connect()
+  // We would iterate here only on error. In which case next endpoint will be tried.
+  for (let index = 0; index < nodeURLs.length; index++) {
+    logger.info(`Using ${nodeURLs[index]} as Ripple API point.`)
+    for (let i = 0;i < CONNECTIONS_COUNT;i++) {
+      const api = new RippleAPI({
+        server: nodeURLs[index],
+        timeout: DEFAULT_WS_TIMEOUT
+      })
 
-    connections.push({
-      connection: api,
-      queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
-      index: i
-    })
+      await api.connect()
+
+      connections.push({
+        connection: api,
+        queue: new PQueue({ concurrency: MAX_CONNECTION_CONCURRENCY }),
+        index: i
+      })
+    }
+
+    await exporter.connect()
+    await initLastProcessedLedger()
+    try {
+      await fetchEvents()
+    }
+    catch(ex) {
+      logger.error(ex)
+      if ( index == nodeURLs.length - 1) {
+        // We just tried the last endpoint. Throw exception. Re-start the Pod.
+        throw ex
+      }
+    }
   }
-
-  await exporter.connect()
-  await initLastProcessedLedger()
-  await fetchEvents()
 }
 
 init()
