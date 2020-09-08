@@ -22,8 +22,7 @@ const EXPORT_TIMEOUT_MLS = parseInt(process.env.EXPORT_TIMEOUT_MLS || 1000 * 60 
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || "20")
 
 let connections = []
-// Go over endpoints on error
-let apiURLToUse = 0
+const nodeURLs = XRP_NODE_URLS.split(",");
 
 let lastProcessedPosition = {
   blockNumber: parseInt(process.env.LEDGER || "32570"),
@@ -191,18 +190,18 @@ async function fetchEvents() {
 }
 
 async function createNewSetConnections() {
-  var nodeURLs = XRP_NODE_URLS.split(",");
   connections = []
 
-  if ( apiURLToUse >= nodeURLs.length) {
+  if (!nodeURLs) {
     // No more endpoints to try. Throw exception. Re-start the Pod.
     throw "Error: All API URLs returned error."
   }
 
-  logger.info(`Using ${nodeURLs[apiURLToUse]} as Ripple API point.`)
+  nodeURL = nodeURLs.pop(0)
+  logger.info(`Using ${nodeURL} as Ripple API point.`)
   for (let i = 0; i < CONNECTIONS_COUNT; i++) {
     const api = new RippleAPI({
-      server: nodeURLs[apiURLToUse],
+      server: nodeURL,
       timeout: DEFAULT_WS_TIMEOUT
     })
 
@@ -214,8 +213,6 @@ async function createNewSetConnections() {
       index: i
     })
   }
-
-  apiURLToUse += 1;
 }
 
 const init = async () => {
