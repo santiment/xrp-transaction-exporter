@@ -192,12 +192,12 @@ async function fetchEvents() {
 async function createNewSetConnections() {
   connections = []
 
-  if (!nodeURLs) {
+  if (0 == nodeURLs.length) {
     // No more endpoints to try. Throw exception. Re-start the Pod.
     throw "Error: All API URLs returned error."
   }
 
-  nodeURL = nodeURLs.pop(0)
+  nodeURL = nodeURLs.shift()
   logger.info(`Using ${nodeURL} as Ripple API point.`)
   for (let i = 0; i < CONNECTIONS_COUNT; i++) {
     const api = new RippleAPI({
